@@ -1,0 +1,28 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: gpu-memory-stress
+spec:
+  backoffLimit: 0
+  template:
+    metadata:
+      labels:
+        app: gpu-stressor
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: gpu-stressor
+          image: gpu-stressor:dev
+          imagePullPolicy: IfNotPresent
+          args:
+            - "--gpu-index"
+            - "0"
+            - "--type"
+            - "memory"
+            - "--percent"
+            - "50"
+            - "--duration"
+            - "60"
+          resources:
+            limits:
+              nvidia.com/gpu: 1
