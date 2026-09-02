@@ -4,6 +4,7 @@
 #include "gpu_metrics.h"
 #include "gpu_power.h"
 #include "gpu_thermal.h"
+#include "gpu_tensor.h"
 #include <iostream>
 #include <string>
 #include <cstdlib>
@@ -20,8 +21,9 @@ void print_menu() {
     std::cout << "3. PCIe Bandwidth Fault" << std::endl;
     std::cout << "4. GPU Power Fault" << std::endl;
     std::cout << "5. GPU Thermal Fault" << std::endl;
+    std::cout << "6. GPU Tensor Core Fault" << std::endl;
     std::cout << "======================================" << std::endl;
-    std::cout << "Select a fault type (1-5): ";
+    std::cout << "Select a fault type (1-6): ";
 }
 
 int main(int argc, char** argv) {
@@ -61,6 +63,7 @@ int main(int argc, char** argv) {
         else if (choice == 3) fault_type = "pcie";
         else if (choice == 4) fault_type = "power";
         else if (choice == 5) fault_type = "thermal";
+        else if (choice == 6) fault_type = "tensor";
         else {
             std::cerr << "Invalid choice. Exiting." << std::endl;
             return 1;
@@ -89,6 +92,7 @@ int main(int argc, char** argv) {
     GpuPcieStressor* pcie_stressor = nullptr;
     GpuPowerStressor* power_stressor = nullptr;
     GpuThermalStressor* thermal_stressor = nullptr;
+    GpuTensorStressor* tensor_stressor = nullptr;
 
     if (fault_type == "memory") {
         mem_stressor = new GpuMemoryStressor(gpu_index);
@@ -110,6 +114,10 @@ int main(int argc, char** argv) {
         thermal_stressor = new GpuThermalStressor(gpu_index);
         if (!thermal_stressor->start_target_temp((unsigned int)percent)) return 1;
         std::cout << "[Target: " << percent << " C] Thermal Fault active." << std::endl;
+    } else if (fault_type == "tensor") {
+        tensor_stressor = new GpuTensorStressor(gpu_index);
+        if (!tensor_stressor->start_percent(percent)) return 1;
+        std::cout << "[Target: " << percent << "%] Tensor Core Fault active." << std::endl;
     } else {
         std::cerr << "Unknown fault type: " << fault_type << std::endl;
         return 1;
@@ -140,6 +148,7 @@ int main(int argc, char** argv) {
     if (pcie_stressor) { pcie_stressor->stop(); delete pcie_stressor; }
     if (power_stressor) { power_stressor->stop(); delete power_stressor; }
     if (thermal_stressor) { thermal_stressor->stop(); delete thermal_stressor; }
+    if (tensor_stressor) { tensor_stressor->stop(); delete tensor_stressor; }
 
     std::cout << "Fault injection complete. Exiting..." << std::endl;
     return 0;
