@@ -1,0 +1,15 @@
+name: "Memory Leak to Tensor Crash"
+description: "Simulates a memory leak followed by a sudden tensor core power spike."
+sequence:
+  - step: 1
+    type: memory
+    percent: 40
+    duration: 10
+  - step: 2
+    type: memory
+    percent: 80
+    duration: 10
+  - step: 3
+    type: tensor
+    percent: 30
+    duration: 20
