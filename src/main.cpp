@@ -5,6 +5,8 @@
 #include "gpu_power.h"
 #include "gpu_thermal.h"
 #include "gpu_tensor.h"
+#include "yaml_parser.h"
+#include "workflow_engine.h"
 #include <iostream>
 #include <string>
 #include <cstdlib>
@@ -34,6 +36,8 @@ int main(int argc, char** argv) {
     unsigned int max_power = 0;
     unsigned int max_temp = 0;
 
+    std::string scenario_file = "";
+
     // 플래그(인자) 기반 파싱
     for (int i = 1; i < argc; ++i) {
         std::string arg = argv[i];
@@ -49,6 +53,21 @@ int main(int argc, char** argv) {
             max_power = std::stoul(argv[++i]);
         } else if (arg == "--max-temp" && i + 1 < argc) {
             max_temp = std::stoul(argv[++i]);
+        } else if (arg == "--scenario" && i + 1 < argc) {
+            scenario_file = argv[++i];
+        }
+    }
+
+    // 시나리오 파일이 주어진 경우 워크플로우 엔진 실행 후 종료
+    if (!scenario_file.empty()) {
+        try {
+            ScenarioConfig config = YamlParser::parse(scenario_file);
+            WorkflowEngine engine(gpu_index, max_power, max_temp);
+            engine.run(config);
+            return 0;
+        } catch (const std::exception& e) {
+            std::cerr << "Failed to run scenario: " << e.what() << std::endl;
+            return 1;
         }
     }
 
