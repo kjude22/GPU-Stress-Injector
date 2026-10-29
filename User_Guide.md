@@ -2,7 +2,7 @@
 
 GPU Fault Injector는 쿠버네티스 등 클라우드 네이티브 환경에서 GPU 기반 애플리케이션의 모니터링 및 이상 탐지(Anomaly Detection) 규칙이 제대로 동작하는지 검증하기 위한 도구입니다.
 
-이 도구를 사용하면 손쉽게 **GPU 메모리 부족**, **GPU 코어 과부하**, **PCIe 병목 현상**, **전력 과부하**, **온도 상승(발열)** 등의 하드웨어 스트레스를 인위적으로 발생시킬 수 있습니다.
+이 도구를 사용하면 손쉽게 **GPU 메모리 부족**, **GPU 코어 과부하**, **PCIe 병목 현상**, **전력 과부하**, **온도 상승(발열)**, **텐서 코어 과부하** 등의 하드웨어 스트레스를 인위적으로 발생시킬 수 있습니다.
 
 ---
 
@@ -10,9 +10,25 @@ GPU Fault Injector는 쿠버네티스 등 클라우드 네이티브 환경에서
 
 본 도구는 실제 하드웨어 자원을 극도로 소모시키는 장애 주입기입니다. 시스템 전체가 먹통이 되거나 하드웨어가 손상되는 것을 방지하기 위해 다음과 같은 **안전 상한선(Upper Limit) 및 Kill-Switch**가 공통으로 적용되어 있습니다.
 
-- **안전 제한선 (Hard-coded Limits)**: 모듈별로 시스템 보호를 위한 최대 상한선이 하드코딩되어 있습니다 (Memory: 20%, Util: 50%, PCIe: 25%, Power: 60%, Thermal: 65°C). 사용자가 이보다 높은 수치를 입력하더라도 상한선으로 자동 조정됩니다.
+- **안전 제한선 (Hard-coded Limits)**: 모듈별로 시스템 보호를 위한 최대 상한선이 하드코딩되어 있습니다 (Memory: 20%, Util: 50%, PCIe: 25%, Power: 60%, Thermal: 65°C, **Tensor: 30%**). 사용자가 이보다 높은 수치를 입력하더라도 상한선으로 자동 조정됩니다.
 - **온도 제어 (Kill-Switch)**: 모니터링 중 GPU 온도가 75°C 이상으로 치솟을 경우, 즉시 모든 부하 프로세스를 멈추고 프로그램을 안전하게 강제 종료합니다.
 - **전력 제어**: 전력 스파이크를 방지하기 위해 배치(Batch) 사이즈와 커널 호출 주기를 보수적으로 제한하며, 목표 전력치 초과 시 스스로 연산을 쉬어갑니다(Sleep).
+- **텐서 코어 전력 락 (Tensor Safety)**: Tensor Core 모드에서는 NVML을 통해 하드웨어 Power Limit을 기존의 70%로 일시 락(Lock)하여, 텐서 코어 부하로 인한 전력 스파이크를 물리적으로 차단합니다. (sudo 권한 필요)
+
+---
+
+## 📦 의존성 설치 (Prerequisites)
+
+빌드 전에 아래 패키지들이 설치되어 있어야 합니다.
+
+```bash
+# Ubuntu / Debian
+sudo apt-get update
+sudo apt-get install -y build-essential make libyaml-cpp-dev
+
+# CUDA Toolkit (11.0 이상 필요, WMMA/Tensor Core 지원)
+# https://developer.nvidia.com/cuda-downloads 에서 설치
+```
 
 ---
 
@@ -37,16 +53,21 @@ make
 ### 1. 기본 명령어 구조
 
 ```bash
+# 단일 부하 주입
 ./build/gpu-stressor --type <모듈_타입> --percent <목표수치> --duration <지속시간> [추가 옵션]
+
+# YAML 시나리오 기반 워크플로우 실행
+./build/gpu-stressor --scenario <시나리오_파일.yaml> [추가 옵션]
 ```
 
 ### 2. 전체 입력 인자(Flag) 설명 표
 
 | 인자 (Flag) | 설명 | 예시 |
 | :--- | :--- | :--- |
-| `--type` | 주입할 장애(부하)의 종류를 지정합니다. (`memory`, `util`, `pcie`, `power`, `thermal`) | `--type power` |
+| `--type` | 주입할 장애(부하)의 종류를 지정합니다. (`memory`, `util`, `pcie`, `power`, `thermal`, `tensor`) | `--type tensor` |
 | `--percent` | 각 모듈별 목표 수치를 지정합니다. (일반적으로 %, thermal 모드에서는 °C) | `--percent 70` |
 | `--duration` | 부하를 지속할 시간입니다. (초 단위) | `--duration 60` |
+| `--scenario` | YAML 시나리오 파일 경로를 지정하여 워크플로우 모드로 실행합니다. | `--scenario scenarios/ai_workload_spike.yaml` |
 | `--gpu-index` | (선택) 부하를 가할 대상 GPU의 인덱스 번호입니다. (기본값: 0) | `--gpu-index 0` |
 | `--max-temp` | (선택) 공통 안전 옵션. 지정한 온도(°C) 도달 시 프로그램을 즉시 종료합니다. | `--max-temp 80` |
 | `--max-power` | (선택) 공통 안전 옵션. 지정한 전력(W) 도달 시 프로그램을 즉시 종료합니다. | `--max-power 150` |
@@ -95,9 +116,66 @@ sudo ./build/gpu-stressor --type power --percent 70 --duration 120
 sudo ./build/gpu-stressor --type thermal --percent 70 --duration 300
 ```
 
+#### ⑥ GPU 텐서 코어 부하 (`--type tensor`) (신규)
+- **원리**: NVIDIA WMMA(Warp Matrix Multiply-Accumulate) API를 사용하여 FP16 16×16×16 행렬 곱셈-누산 연산을 텐서 코어에 직접 쏟아부어 전용 AI 연산 유닛에 부하를 가합니다. 글로벌 메모리 접근 없이 레지스터/공유 메모리에서만 동작하여 VRAM 간섭을 최소화합니다.
+- `--percent`: 텐서 코어 Duty Cycle (%, 내부 상한선 30%)
+- **안전 장치**: NVML을 통해 하드웨어 Power Limit을 기존의 70%로 일시 락(Lock)하여 전력 스파이크를 차단합니다. (sudo 권한 필요)
+```bash
+# 텐서 코어를 25% Duty Cycle로 120초간 부하 (Power Limit 락을 위해 sudo 권장)
+sudo ./build/gpu-stressor --type tensor --percent 25 --duration 120
+```
+
 ---
 
-### 4. 대화형(Interactive) 실행
+### 4. YAML 시나리오 워크플로우 실행
+
+`--scenario` 플래그를 사용하면 YAML 파일에 정의된 여러 부하 단계를 **순차적으로 자동 실행**할 수 있습니다. 이를 통해 실제 운영 환경에서 발생할 수 있는 복합 장애 상황을 재현할 수 있습니다.
+
+#### 실행 예시
+
+```bash
+# AI 워크로드 스파이크 시나리오 실행
+sudo ./build/gpu-stressor --scenario scenarios/ai_workload_spike.yaml
+
+# 메모리 누수 → 텐서 코어 크래시 시나리오 실행 (최대 온도 제한 추가)
+sudo ./build/gpu-stressor --scenario scenarios/memory_leak_to_crash.yaml --max-temp 75
+```
+
+#### YAML 시나리오 파일 형식
+
+```yaml
+name: "AI Workload Spike"
+description: "Simulates typical AI batch processing with Util -> PCIe -> Tensor sequence."
+sequence:
+  - step: 1
+    type: pcie
+    percent: 25
+    duration: 15
+  - step: 2
+    type: util
+    percent: 90
+    duration: 30
+  - step: 3
+    type: tensor
+    percent: 25
+    duration: 30
+```
+
+| 필드 | 설명 |
+| :--- | :--- |
+| `name` | 시나리오 이름 |
+| `description` | 시나리오 설명 |
+| `sequence` | 순차 실행할 부하 스텝 목록 |
+| `sequence[].step` | 스텝 번호 (순서 표시용) |
+| `sequence[].type` | 부하 모듈 타입 (`memory`, `util`, `pcie`, `power`, `thermal`, `tensor`) |
+| `sequence[].percent` | 목표 수치 (%) |
+| `sequence[].duration` | 지속 시간 (초) |
+
+기본 제공 시나리오 파일은 `scenarios/` 디렉토리에 있으며, 직접 작성하여 사용할 수도 있습니다.
+
+---
+
+### 5. 대화형(Interactive) 실행
 터미널에서 아무런 인자 없이 `./build/gpu-stressor`를 실행하면 번호를 입력하여 직관적으로 모듈을 선택할 수 있는 메뉴가 나타납니다.
 
 ```bash
@@ -110,9 +188,12 @@ $ ./build/gpu-stressor
 3. PCIe Bandwidth Fault
 4. GPU Power Fault
 5. GPU Thermal Fault
+6. GPU Tensor Core Fault
 ======================================
-Select a fault type (1-5): 
+Select a fault type (1-6): 
 ```
+
+> **참고**: 대화형 모드에서는 YAML 시나리오 실행이 불가합니다. 시나리오 실행은 `--scenario` 플래그를 사용하세요.
 
 ---
 
@@ -125,3 +206,4 @@ Kubernetes(k8s) 등에 장애를 주입한 뒤, Grafana 모니터링 대시보�
 3. **PCIe 모드**: `DCGM_FI_DEV_PCIE_TX_THROUGHPUT` / `DCGM_FI_DEV_PCIE_RX_THROUGHPUT` (PCIe 송수신 대역폭 피크 도달)
 4. **Power 모드**: `DCGM_FI_DEV_POWER_USAGE` (전력 소모량 Watt 상승)
 5. **Thermal 모드**: `DCGM_FI_DEV_GPU_TEMP` (GPU 온도 상승 및 평형 유지)
+6. **Tensor 모드**: `DCGM_FI_DEV_POWER_USAGE` + `DCGM_FI_PROF_PIPE_TENSOR_ACTIVE` (전력 소모 + 텐서 파이프라인 활성률)

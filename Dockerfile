@@ -4,7 +4,7 @@ WORKDIR /src
 COPY src ./src
 COPY Makefile .
 
-RUN apt-get update && apt-get install -y --no-install-recommends make g++ && make
+RUN apt-get update && apt-get install -y --no-install-recommends make g++ libyaml-cpp-dev && make
 
 FROM nvidia/cuda:12.6.0-base-ubuntu22.04
 
